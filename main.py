@@ -1,11 +1,12 @@
+import logging
 import os
-import scipy.misc
+
 import numpy as np
-
-from model import DCGAN
-from utils import pp, visualize, to_json, show_all_variables
-
 import tensorflow as tf
+
+from classifier import InceptionClassifier
+from model import DCGAN
+from utils import pp, visualize, show_all_variables
 
 flags = tf.app.flags
 flags.DEFINE_integer("epoch", 25, "Epoch to train [25]")
@@ -61,6 +62,22 @@ def main(_):
           is_crop=FLAGS.is_crop,
           checkpoint_dir=FLAGS.checkpoint_dir,
           sample_dir=FLAGS.sample_dir)
+    elif FLAGS.dataset == 'amfed':
+        dcgan = DCGAN(
+            sess,
+            input_width=FLAGS.input_width,
+            input_height=FLAGS.input_height,
+            output_width=FLAGS.output_width,
+            output_height=FLAGS.output_height,
+            batch_size=FLAGS.batch_size,
+            sample_num=FLAGS.batch_size,
+            y_dim=1,
+            c_dim=FLAGS.c_dim,
+            dataset_name=FLAGS.dataset,
+            input_fname_pattern=FLAGS.input_fname_pattern,
+            is_crop=FLAGS.is_crop,
+            checkpoint_dir=FLAGS.checkpoint_dir,
+            sample_dir=FLAGS.sample_dir)
     else:
       dcgan = DCGAN(
           sess,
@@ -95,5 +112,10 @@ def main(_):
     OPTION = 1
     visualize(sess, dcgan, FLAGS, OPTION)
 
+    if FLAGS.dataset == 'amfed':
+        clf = InceptionClassifier(sess, dcgan, y_dim=1)
+        clf.evaluate(FLAGS)
+
 if __name__ == '__main__':
-  tf.app.run()
+    logging.basicConfig(level=logging.INFO)
+    tf.app.run()

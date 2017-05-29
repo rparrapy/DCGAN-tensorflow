@@ -30,6 +30,7 @@ def get_image(image_path, input_height, input_width,
                    resize_height, resize_width, is_crop)
 
 def save_images(images, size, image_path):
+  images = np.flip(images, axis=-1)
   return imsave(inverse_transform(images), size, image_path)
 
 def imread(path, is_grayscale = False):
@@ -169,6 +170,16 @@ def make_gif(images, fname, duration=2, true_image=False):
   clip = mpy.VideoClip(make_frame, duration=duration)
   clip.write_gif(fname, fps = len(images) / duration)
 
+def sort_by_mse(x, config):
+  even = x[::2].reshape(-1, config.output_height * config.output_height * config.c_dim)
+  odd = x[1::2].reshape(-1, config.output_height * config.output_height * config.c_dim)
+  mse = ((odd - even) ** 2).mean(axis=0)
+  order = np.argsort(mse)
+  result = np.empty((even.shape[0] * 2, even.shape[1]), dtype=even.dtype)
+  result[::2] = even
+  result[1::2] = odd
+  return result.reshape(-1, config.output_height, config.output_height, config.c_dim)
+
 def visualize(sess, dcgan, config, option):
   image_frame_dim = int(math.ceil(config.batch_size**.5))
   if option == 0:
@@ -176,12 +187,15 @@ def visualize(sess, dcgan, config, option):
     samples = sess.run(dcgan.sampler, feed_dict={dcgan.z: z_sample})
     save_images(samples, [image_frame_dim, image_frame_dim], './samples/test_%s.png' % strftime("%Y%m%d%H%M%S", gmtime()))
   elif option == 1:
-    values = np.arange(0, 1, 1./config.batch_size)
+    values = np.arange(0, 1, 1./config.batch_size) if not config.dataset == "amfed" else np.arange(0, 1, 1./(config.batch_size / 2))
     for idx in xrange(100):
       print(" [*] %d" % idx)
-      z_sample = np.zeros([config.batch_size, dcgan.z_dim])
-      for kdx, z in enumerate(z_sample):
-        z[idx] = values[kdx]
+      if config.dataset == "amfed":
+        z_sample = np.random.uniform(-1, 1, size=[int(config.batch_size / 2), dcgan.z_dim])
+      else:
+        z_sample = np.zeros([config.batch_size, dcgan.z_dim])
+        for kdx, z in enumerate(z_sample):
+          z[idx] = values[kdx]
 
       if config.dataset == "mnist":
         y = np.random.choice(10, config.batch_size)
@@ -189,6 +203,13 @@ def visualize(sess, dcgan, config, option):
         y_one_hot[np.arange(config.batch_size), y] = 1
 
         samples = sess.run(dcgan.sampler, feed_dict={dcgan.z: z_sample, dcgan.y: y_one_hot})
+      elif config.dataset == "amfed":
+        y_one_hot = np.zeros((config.batch_size, 1))
+        y_one_hot[1::2] += 1
+        # y_one_hot[int(config.batch_size):] = 1
+        z_sample = np.repeat(z_sample, 2, axis=0)
+        samples = sess.run(dcgan.sampler, feed_dict={dcgan.z: z_sample, dcgan.y: y_one_hot})
+        samples = sort_by_mse(samples, config)
       else:
         samples = sess.run(dcgan.sampler, feed_dict={dcgan.z: z_sample})
 
