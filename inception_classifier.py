@@ -1,3 +1,6 @@
+from sklearn.model_selection import GridSearchCV
+from sklearn.svm import SVC
+
 from nideep.datasets.amfed.amfed import AMFED
 import numpy as np
 import os
@@ -8,8 +11,8 @@ import tarfile
 import tensorflow as tf
 from tensorflow.python.platform import gfile
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import accuracy_score, confusion_matrix
-
+from sklearn.metrics import accuracy_score, confusion_matrix, roc_curve, auc, roc_auc_score
+import pickle
 
 DATA_URL = 'http://download.tensorflow.org/models/image/imagenet/inception-2015-12-05.tgz'
 
@@ -37,15 +40,15 @@ class InceptionClassifier(object):
         dataset = AMFED(dir_prefix='/mnt/raid/data/ni/dnn/AMFED/', video_type=AMFED.VIDEO_TYPE_AVI,
                         cache_dir=self.cache_dir)
 
-        (X_train, y_train, X_test, y_test) = dataset.as_numpy_array(train_proportion=0.8)
+        (X_train, y_train, _, _, X_test, y_test, _, _) = dataset.as_numpy_array(train_proportion=0.8)
 
         if os.path.exists(tmp_train) and os.path.exists(tmp_test):
-            X_train_memmap = np.memmap(tmp_train).reshape((-1, self.NB_FEATURES))
-            X_test_memmap = np.memmap(tmp_test).reshape((-1, self.NB_FEATURES))
+            X_train_memmap = np.memmap(tmp_train, dtype='float32').reshape((-1, self.NB_FEATURES))
+            X_test_memmap = np.memmap(tmp_test, dtype='float32').reshape((-1, self.NB_FEATURES))
         else:
             print 'got dataset'
-            X_train = (X_train.astype(np.float32) - 127.5) / 127.5
-            X_test = (X_test.astype(np.float32) - 127.5) / 127.5
+            X_train = np.flip((X_train.astype(np.float32) - 127.5) / 127.5, axis=-1)
+            X_test = np.flip((X_test.astype(np.float32) - 127.5) / 127.5, axis=-1)
             y_train = y_train.ravel()
             y_test = y_test.ravel()
             print "train dataset shape: " + str(X_train.shape)
@@ -54,45 +57,66 @@ class InceptionClassifier(object):
             X_train_preprocessed = self.extract_features(X_train)
             X_test_preprocessed = self.extract_features(X_test)
 
-            X_train_memmap = np.memmap(tmp_train, shape=X_train_preprocessed.shape, mode='w+')
-            X_test_memmap = np.memmap(tmp_test, shape=X_test_preprocessed.shape, mode='w+')
+            X_train_memmap = np.memmap(tmp_train, shape=X_train_preprocessed.shape, mode='w+', dtype='float32')
+            X_test_memmap = np.memmap(tmp_test, shape=X_test_preprocessed.shape, mode='w+', dtype='float32')
             X_train_memmap[:] = X_train_preprocessed[:]
             X_test_memmap[:] = X_test_preprocessed[:]
 
         return X_train_memmap, X_test_memmap, y_train, y_test
 
+    def get_classifier(self):
+        # param_grid = {'C': [2 ** x for x in range(-3, 5)],
+        #               'gamma': [2 ** x for x in range(-3, 5)]}
+        # return GridSearchCV(SVC(), param_grid)
+        return LogisticRegression(C=1000.0)
+
     def evaluate(self, config):
         if config.dataset == 'amfed':
             X_train, X_test, y_train, y_test = self.get_dataset()
+            y_train = np.squeeze(y_train)
+            y_test = np.squeeze(y_test)
 
-            clf = LogisticRegression()
+            clf = self.get_classifier()
             print 'Evaluating unbalanced dataset'
             clf.fit(X_train, y_train)
             y_pred = clf.predict(X_test)
+            y_score = clf.decision_function(X_test)
+            self.save_roc(y_test, y_score,  'unbalanced_roc.p')
             print("Accuracy: {0:0.1f}%".format(accuracy_score(y_test, y_pred) * 100))
             print(confusion_matrix(y_test, y_pred))
 
-            clf = LogisticRegression()
+            clf = self.get_classifier()
             print 'Evaluating oversampled dataset'
             X_train_oversampled, y_train_oversampled = self.oversample(X_train, y_train)
             clf.fit(X_train_oversampled, y_train_oversampled)
             y_pred = clf.predict(X_test)
+            y_score = clf.decision_function(X_test)
+            self.save_roc(y_test, y_score, 'oversampled_roc.p')
             print("Accuracy: {0:0.1f}%".format(accuracy_score(y_test, y_pred) * 100))
             print(confusion_matrix(y_test, y_pred))
 
-            clf = LogisticRegression()
+            clf = self.get_classifier()
             print 'Evaluating augmented dataset'
             X_train_augmented, y_train_augmented = self.get_augmented_dataset(X_train, y_train, config)
             clf.fit(X_train_augmented, y_train_augmented)
             y_pred = clf.predict(X_test)
+            y_score = clf.decision_function(X_test)
+            self.save_roc(y_test, y_score, 'augmented_roc.p')
             print("Accuracy: {0:0.1f}%".format(accuracy_score(y_test, y_pred) * 100))
             print(confusion_matrix(y_test, y_pred))
+
+    def save_roc(self, y_test, y_score, name):
+        fpr, tpr, thresholds = roc_curve(y_test, y_score)
+        roc_auc = auc(fpr, tpr)
+        result = {'fpr': fpr, 'tpr': tpr, 'thresholds': thresholds, 'auc': roc_auc}
+        pickle.dump(result, open(name, "wb"))
+        print 'AUC: %s' % str(roc_auc_score(y_test, y_score))
 
     def get_augmented_dataset(self, X_train, y_train, config):
         tmp = os.path.join(self.cache_dir, self.PREPROCESSED_AUGEMENTED)
         if os.path.exists(tmp):
-            X_gen = np.memmap(tmp).reshape((-1, self.NB_FEATURES))
-            y_gen = np.ones((X_gen.shape[0], 1))
+            X_gen = np.memmap(tmp, dtype='float32').reshape((-1, self.NB_FEATURES))
+            y_gen = np.ones((X_gen.shape[0], ))
         else:
             X_gen, y_gen = self.augment(y_train, config, tmp)
         return np.concatenate((X_train, X_gen)), np.concatenate((y_train, y_gen))
@@ -109,9 +133,9 @@ class InceptionClassifier(object):
 
         X_augmented = np.concatenate(result)
         X_augmented_preprocessed = self.extract_features(X_augmented)
-        y_augmented = np.ones((config.batch_size * sample_size, 1))
+        y_augmented = np.ones((config.batch_size * sample_size, ))
 
-        X_augmented_memmap = np.memmap(tmp_path, shape=X_augmented_preprocessed.shape, mode='w+')
+        X_augmented_memmap = np.memmap(tmp_path, shape=X_augmented_preprocessed.shape, dtype='float32', mode='w+')
         X_augmented_memmap[:] = X_augmented_preprocessed[:]
 
         return X_augmented_memmap, y_augmented

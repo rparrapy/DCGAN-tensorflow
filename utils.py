@@ -206,9 +206,11 @@ def visualize(sess, dcgan, config, option):
       elif config.dataset == "amfed":
         y_one_hot = np.zeros((config.batch_size, 1))
         y_one_hot[1::2] += 1
+        y_video_label = (np.ones((config.batch_size, 1)) * idx) / 141.0
+        y_sample = np.concatenate([y_one_hot, y_video_label], axis=1)
         # y_one_hot[int(config.batch_size):] = 1
         z_sample = np.repeat(z_sample, 2, axis=0)
-        samples = sess.run(dcgan.sampler, feed_dict={dcgan.z: z_sample, dcgan.y: y_one_hot})
+        samples = sess.run(dcgan.sampler, feed_dict={dcgan.z: z_sample, dcgan.y: y_sample})
         samples = sort_by_mse(samples, config)
       else:
         samples = sess.run(dcgan.sampler, feed_dict={dcgan.z: z_sample})

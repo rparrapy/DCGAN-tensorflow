@@ -5,6 +5,7 @@ import time
 from glob import glob
 
 from six.moves import xrange
+from sklearn import preprocessing
 
 from ops import *
 from utils import *
@@ -20,7 +21,8 @@ class DCGAN(object):
                  batch_size=64, sample_num=64, output_height=64, output_width=64,
                  y_dim=None, z_dim=100, gf_dim=64, df_dim=64,
                  gfc_dim=1024, dfc_dim=1024, c_dim=3, dataset_name='default',
-                 input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None, dropout_rate=1.0):
+                 input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None, dropout_rate=1.0,
+                 checkpoint_every=500):
         """
 
         Args:
@@ -62,7 +64,7 @@ class DCGAN(object):
         self.d_bn1 = batch_norm(name='d_bn1')
         self.d_bn2 = batch_norm(name='d_bn2')
 
-        #if not self.y_dim:
+        # if not self.y_dim:
         self.d_bn3 = batch_norm(name='d_bn3')
         self.d_bn4 = batch_norm(name='d_bn4')
 
@@ -70,12 +72,13 @@ class DCGAN(object):
         self.g_bn1 = batch_norm(name='g_bn1')
         self.g_bn2 = batch_norm(name='g_bn2')
 
-        #if not self.y_dim:
+        # if not self.y_dim:
         self.g_bn3 = batch_norm(name='g_bn3')
 
         self.dataset_name = dataset_name
         self.input_fname_pattern = input_fname_pattern
         self.checkpoint_dir = checkpoint_dir
+        self.checkpoint_every = checkpoint_every
         self.build_model()
 
     def build_model(self):
@@ -144,7 +147,7 @@ class DCGAN(object):
         self.d_vars = [var for var in t_vars if 'd_' in var.name]
         self.g_vars = [var for var in t_vars if 'g_' in var.name]
 
-        self.saver = tf.train.Saver()
+        self.saver = tf.train.Saver(max_to_keep=10)
 
     def train(self, config):
         """Train DCGAN"""
@@ -153,8 +156,13 @@ class DCGAN(object):
         elif config.dataset == 'amfed':
             dataset = AMFED(dir_prefix='/mnt/raid/data/ni/dnn/AMFED/', video_type=AMFED.VIDEO_TYPE_AVI,
                             cache_dir='/mnt/raid/data/ni/dnn/rparra/cache/')
-            data_X, data_y, _, _ = dataset.as_numpy_array()
+            data_X, data_y, videos_train, _, _, _, _, _ = dataset.as_numpy_array()
             data_X = (data_X.astype(np.float32) - 127.5) / 127.5
+            le = preprocessing.LabelEncoder()
+            le.fit(videos_train)
+            encoded_video_labels = np.expand_dims(le.transform(videos_train), axis=1)
+            encoded_video_labels = encoded_video_labels / float(encoded_video_labels.max())
+            data_y = np.concatenate([data_y, encoded_video_labels], axis=1)
             # data_y[data_y == 1] = 0.9
             # data_X = data_X.reshape(data_X.shape + (self.c_dim, ))
             print "dataset shape: " + str(data_X.shape)
@@ -329,7 +337,7 @@ class DCGAN(object):
                         except:
                             print("one pic error!...")
 
-                if np.mod(counter, 500) == 2:
+                if np.mod(counter, self.checkpoint_every) == 2:
                     self.save(config.checkpoint_dir, counter)
 
     def discriminator(self, image, y=None, reuse=False):
@@ -350,25 +358,25 @@ class DCGAN(object):
                 x = conv_cond_concat(image, yb)
 
                 h0 = lrelu(tf.nn.dropout(conv2d(x, self.df_dim, name='d_h0_conv'), self.dropout_rate))
-                #h0 = conv_cond_concat(h0, yb)
+                # h0 = conv_cond_concat(h0, yb)
 
                 h1 = lrelu(tf.nn.dropout(self.d_bn1(conv2d(h0, self.df_dim * 2, name='d_h1_conv')), self.dropout_rate))
                 # h1 = tf.reshape(h1, [self.batch_size, -1])
-                #h1 = conv_cond_concat(h1, yb)
+                # h1 = conv_cond_concat(h1, yb)
 
                 h2 = lrelu(tf.nn.dropout(self.d_bn2(conv2d(h1, self.df_dim * 4, name='d_h2_conv')), self.dropout_rate))
                 # h2 = tf.reshape(h2, [self.batch_size, -1])
-                #h2 = conv_cond_concat(h2, yb)
+                # h2 = conv_cond_concat(h2, yb)
 
                 h3 = lrelu(tf.nn.dropout(self.d_bn3(conv2d(h2, self.df_dim * 8, name='d_h3_conv')), self.dropout_rate))
                 h3 = tf.reshape(h3, [self.batch_size, -1])
-                #h3 = concat([h3, y], 1)
+                # h3 = concat([h3, y], 1)
 
                 h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h3_lin')
-                #h4 = lrelu(self.d_bn4(linear(h3, self.dfc_dim, 'd_h4_lin')))
-                #h4 = concat([h4, y], 1)
+                # h4 = lrelu(self.d_bn4(linear(h3, self.dfc_dim, 'd_h4_lin')))
+                # h4 = concat([h4, y], 1)
 
-                #h5 = linear(h4, 1, 'd_h5_lin')
+                # h5 = linear(h4, 1, 'd_h5_lin')
 
                 return tf.nn.sigmoid(h4), h4
 
@@ -605,14 +613,25 @@ class DCGAN(object):
                         os.path.join(checkpoint_dir, model_name),
                         global_step=step)
 
-    def load(self, checkpoint_dir):
+    def load(self, checkpoint_dir, index=-1):
         import re
         print(" [*] Reading checkpoints...")
         checkpoint_dir = os.path.join(checkpoint_dir, self.model_dir)
 
         ckpt = tf.train.get_checkpoint_state(checkpoint_dir)
-        if ckpt and ckpt.model_checkpoint_path:
-            ckpt_name = os.path.basename(ckpt.model_checkpoint_path)
+
+        def get_checkpoint_path(ckpt, index):
+            if not ckpt: return ''
+            checkpoint_paths = list(ckpt.all_model_checkpoint_paths)
+            try:
+                path = checkpoint_paths[index]
+            except IndexError:
+                path = ''
+            return path
+
+        ckpt_path = get_checkpoint_path(ckpt, index)
+        if ckpt_path:
+            ckpt_name = os.path.basename(ckpt_path)
             self.saver.restore(self.sess, os.path.join(checkpoint_dir, ckpt_name))
             counter = int(next(re.finditer("(\d+)(?!.*\d)", ckpt_name)).group(0))
             print(" [*] Success to read {}".format(ckpt_name))

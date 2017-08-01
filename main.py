@@ -4,9 +4,13 @@ import os
 import numpy as np
 import tensorflow as tf
 
-from classifier import InceptionClassifier
+from cnn_classifier import CNNClassifier
+from inception_classifier import InceptionClassifier
+from keras_inception_classifier import KerasInceptionClassifier
+from knn_classifier import KNNClassifier
 from model import DCGAN
 from utils import pp, visualize, show_all_variables
+import pandas as pd
 
 flags = tf.app.flags
 flags.DEFINE_integer("epoch", 25, "Epoch to train [25]")
@@ -19,6 +23,7 @@ flags.DEFINE_integer("input_width", None, "The size of image to use (will be cen
 flags.DEFINE_integer("output_height", 64, "The size of the output images to produce [64]")
 flags.DEFINE_integer("output_width", None, "The size of the output images to produce. If None, same value as output_height [None]")
 flags.DEFINE_integer("c_dim", 3, "Dimension of image color. [3]")
+flags.DEFINE_integer("checkpoint_every", 9375, "Number of SGD steps between checkpoints. [3]")
 flags.DEFINE_string("dataset", "celebA", "The name of dataset [celebA, mnist, lsun]")
 flags.DEFINE_string("input_fname_pattern", "*.jpg", "Glob pattern of filename of input images [*]")
 flags.DEFINE_string("checkpoint_dir", "checkpoint", "Directory name to save the checkpoints [checkpoint]")
@@ -71,12 +76,13 @@ def main(_):
             output_height=FLAGS.output_height,
             batch_size=FLAGS.batch_size,
             sample_num=FLAGS.batch_size,
-            y_dim=1,
+            y_dim=2,
             c_dim=FLAGS.c_dim,
             dataset_name=FLAGS.dataset,
             input_fname_pattern=FLAGS.input_fname_pattern,
             is_crop=FLAGS.is_crop,
             checkpoint_dir=FLAGS.checkpoint_dir,
+            checkpoint_every=FLAGS.checkpoint_every,
             sample_dir=FLAGS.sample_dir)
     else:
       dcgan = DCGAN(
@@ -113,8 +119,18 @@ def main(_):
     visualize(sess, dcgan, FLAGS, OPTION)
 
     if FLAGS.dataset == 'amfed':
-        clf = InceptionClassifier(sess, dcgan, y_dim=1)
-        clf.evaluate(FLAGS)
+        results = []
+        clf = CNNClassifier(sess, dcgan)
+        custom_cnn_results = clf.evaluate(FLAGS, teardown=True)
+        results.append(custom_cnn_results)
+        #
+        clf = KerasInceptionClassifier(sess, dcgan)
+        keras_results = clf.evaluate(FLAGS)
+        results.append(keras_results)
+        df = pd.concat(results)
+        df.to_csv('result_summary.csv')
+        # clf = KNNClassifier(sess, dcgan)
+        # knn_results = clf.evaluate(FLAGS)
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)
