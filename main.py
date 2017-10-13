@@ -5,6 +5,7 @@ import numpy as np
 import tensorflow as tf
 
 from cnn_classifier import CNNClassifier
+from discriminator_evaluator import DiscriminatorEvaluator
 from inception_classifier import InceptionClassifier
 from keras_inception_classifier import KerasInceptionClassifier
 from knn_classifier import KNNClassifier
@@ -84,6 +85,24 @@ def main(_):
             checkpoint_dir=FLAGS.checkpoint_dir,
             checkpoint_every=FLAGS.checkpoint_every,
             sample_dir=FLAGS.sample_dir)
+    elif FLAGS.dataset == 'celeba':
+        dcgan = DCGAN(
+            sess,
+            input_width=FLAGS.input_width,
+            input_height=FLAGS.input_height,
+            output_width=FLAGS.output_width,
+            output_height=FLAGS.output_height,
+            batch_size=FLAGS.batch_size,
+            sample_num=FLAGS.batch_size,
+            y_dim=1,
+            c_dim=FLAGS.c_dim,
+            dataset_name=FLAGS.dataset,
+            input_fname_pattern=FLAGS.input_fname_pattern,
+            is_crop=FLAGS.is_crop,
+            checkpoint_dir=FLAGS.checkpoint_dir,
+            checkpoint_every=FLAGS.checkpoint_every,
+            sample_dir=FLAGS.sample_dir)
+
     else:
       dcgan = DCGAN(
           sess,
@@ -93,6 +112,7 @@ def main(_):
           output_height=FLAGS.output_height,
           batch_size=FLAGS.batch_size,
           sample_num=FLAGS.batch_size,
+          y_dim=1,
           c_dim=FLAGS.c_dim,
           dataset_name=FLAGS.dataset,
           input_fname_pattern=FLAGS.input_fname_pattern,
@@ -116,21 +136,25 @@ def main(_):
 
     # Below is codes for visualization
     OPTION = 1
-    visualize(sess, dcgan, FLAGS, OPTION)
+    # visualize(sess, dcgan, FLAGS, OPTION)
 
-    if FLAGS.dataset == 'amfed':
+    if FLAGS.dataset in ['amfed', 'celeba']:
+        # ev = DiscriminatorEvaluator(sess, dcgan, FLAGS)
+        # ev.evaluate()
         results = []
-        clf = CNNClassifier(sess, dcgan)
-        custom_cnn_results = clf.evaluate(FLAGS, teardown=True)
-        results.append(custom_cnn_results)
-        #
         clf = KerasInceptionClassifier(sess, dcgan)
         keras_results = clf.evaluate(FLAGS)
         results.append(keras_results)
+        # clf = CNNClassifier(sess, dcgan)
+        # custom_cnn_results = clf.evaluate(FLAGS, teardown=True)
+        # results.append(custom_cnn_results)
         df = pd.concat(results)
-        df.to_csv('result_summary.csv')
+        df.to_csv('result_summary_%s.csv' % (FLAGS.dataset, ))
         # clf = KNNClassifier(sess, dcgan)
         # knn_results = clf.evaluate(FLAGS)
+        # ev = DiscriminatorEvaluator(sess, dcgan, FLAGS)
+        # ev.evaluate()
+
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO)

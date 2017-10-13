@@ -30,12 +30,12 @@ def get_image(image_path, input_height, input_width,
                    resize_height, resize_width, is_crop)
 
 def save_images(images, size, image_path):
-  images = np.flip(images, axis=-1)
+  # images = np.flip(images, axis=-1)
   return imsave(inverse_transform(images), size, image_path)
 
 def imread(path, is_grayscale = False):
   if (is_grayscale):
-    return scipy.misc.imread(path, flatten = True).astype(np.float)
+    return scipy.misc.imread(path, flatten=True).astype(np.float)
   else:
     return scipy.misc.imread(path).astype(np.float)
 
@@ -190,7 +190,7 @@ def visualize(sess, dcgan, config, option):
     values = np.arange(0, 1, 1./config.batch_size) if not config.dataset == "amfed" else np.arange(0, 1, 1./(config.batch_size / 2))
     for idx in xrange(100):
       print(" [*] %d" % idx)
-      if config.dataset == "amfed":
+      if config.dataset in ["amfed", "celeba"]:
         z_sample = np.random.uniform(-1, 1, size=[int(config.batch_size / 2), dcgan.z_dim])
       else:
         z_sample = np.zeros([config.batch_size, dcgan.z_dim])
@@ -212,6 +212,12 @@ def visualize(sess, dcgan, config, option):
         z_sample = np.repeat(z_sample, 2, axis=0)
         samples = sess.run(dcgan.sampler, feed_dict={dcgan.z: z_sample, dcgan.y: y_sample})
         samples = sort_by_mse(samples, config)
+      elif config.dataset == "celeba":
+        y_one_hot = np.zeros((config.batch_size, 1))
+        y_one_hot[1::2] += 1
+        # y_one_hot[int(config.batch_size):] = 1
+        z_sample = np.repeat(z_sample, 2, axis=0)
+        samples = sess.run(dcgan.sampler, feed_dict={dcgan.z: z_sample, dcgan.y: y_one_hot})
       else:
         samples = sess.run(dcgan.sampler, feed_dict={dcgan.z: z_sample})
 

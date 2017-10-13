@@ -7,6 +7,7 @@ from glob import glob
 from six.moves import xrange
 from sklearn import preprocessing
 
+from nideep.datasets.celeba.celeba import CelebA
 from ops import *
 from utils import *
 from nideep.datasets.amfed.amfed import AMFED
@@ -95,9 +96,6 @@ class DCGAN(object):
         self.sample_inputs = tf.placeholder(
             tf.float32, [self.sample_num] + image_dims, name='sample_inputs')
 
-        inputs = self.inputs
-        sample_inputs = self.sample_inputs
-
         self.z = tf.placeholder(
             tf.float32, [None, self.z_dim], name='z')
         self.z_sum = histogram_summary("z", self.z)
@@ -105,14 +103,14 @@ class DCGAN(object):
         if self.y_dim:
             self.G = self.generator(self.z, self.y)
             self.D, self.D_logits = \
-                self.discriminator(inputs, self.y, reuse=False)
+                self.discriminator(self.inputs, self.y, reuse=False)
 
             self.sampler = self.sampler(self.z, self.y)
             self.D_, self.D_logits_ = \
                 self.discriminator(self.G, self.y, reuse=True)
         else:
             self.G = self.generator(self.z)
-            self.D, self.D_logits = self.discriminator(inputs)
+            self.D, self.D_logits = self.discriminator(self.inputs)
 
             self.sampler = self.sampler(self.z)
             self.D_, self.D_logits_ = self.discriminator(self.G, reuse=True)
@@ -166,6 +164,15 @@ class DCGAN(object):
             # data_y[data_y == 1] = 0.9
             # data_X = data_X.reshape(data_X.shape + (self.c_dim, ))
             print "dataset shape: " + str(data_X.shape)
+        elif config.dataset == 'celeba':
+            dataset = CelebA(dir_prefix='/mnt/antares_raid/home/rparra/workspace/DCGAN-tensorflow/data/celebA',
+                             cache_dir='/mnt/raid/data/ni/dnn/rparra/cache/')
+            data_y, data, _, _= dataset.as_numpy_array(oversample=True, imbalance_proportion=0.01)
+
+            #data_X = (data_X.astype(np.float32) - 127.5) / 127.5
+            # data_y[data_y == 1] = 0.9
+            # data_X = data_X.reshape(data_X.shape + (self.c_dim, ))
+            print "dataset shape: " + str(data_y.shape)
         else:
             data = glob(os.path.join("./data", config.dataset, self.input_fname_pattern))
         # np.random.shuffle(data)
@@ -187,10 +194,13 @@ class DCGAN(object):
 
         sample_z = np.random.uniform(-1, 1, size=(self.sample_num, self.z_dim))
 
-        if config.dataset == 'mnist' or config.dataset == 'amfed':
+        if config.dataset in ['amfed', 'mnist']:
             sample_inputs = data_X[0:self.sample_num]
             sample_labels = data_y[0:self.sample_num]
         else:
+            if config.dataset == 'celeba':
+                sample_labels = data_y[0:self.sample_num]
+
             sample_files = data[0:self.sample_num]
             sample = [
                 get_image(sample_file,
@@ -216,18 +226,23 @@ class DCGAN(object):
             print(" [!] Load failed...")
 
         for epoch in xrange(config.epoch):
-            if config.dataset == 'mnist' or config.dataset == 'amfed':
+            if config.dataset in ['amfed', 'mnist']:
                 batch_idxs = min(len(data_X), config.train_size) // config.batch_size
+            elif config.dataset == 'celeba':
+                batch_idxs = min(len(data), config.train_size) // config.batch_size
             else:
                 data = glob(os.path.join(
                     "./data", config.dataset, self.input_fname_pattern))
                 batch_idxs = min(len(data), config.train_size) // config.batch_size
 
             for idx in xrange(0, batch_idxs):
-                if config.dataset == 'mnist' or config.dataset == 'amfed':
+                if config.dataset in ['amfed', 'mnist']:
                     batch_images = data_X[idx * config.batch_size:(idx + 1) * config.batch_size]
                     batch_labels = data_y[idx * config.batch_size:(idx + 1) * config.batch_size]
                 else:
+                    if config.dataset == 'celeba':
+                        batch_labels = data_y[idx * config.batch_size:(idx + 1) * config.batch_size]
+
                     batch_files = data[idx * config.batch_size:(idx + 1) * config.batch_size]
                     batch = [
                         get_image(batch_file,
@@ -245,7 +260,7 @@ class DCGAN(object):
                 batch_z = np.random.uniform(-1, 1, [config.batch_size, self.z_dim]) \
                     .astype(np.float32)
 
-                if config.dataset == 'mnist' or config.dataset == 'amfed':
+                if config.dataset in ['amfed', 'mnist', 'celeba']:
                     # Update D network
                     _, summary_str = self.sess.run([d_optim, self.d_sum],
                                                    feed_dict={
@@ -267,6 +282,12 @@ class DCGAN(object):
                     _, summary_str = self.sess.run([g_optim, self.g_sum],
                                                    feed_dict={self.z: batch_z, self.y: batch_labels})
                     self.writer.add_summary(summary_str, counter)
+
+                    # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
+                    _, summary_str = self.sess.run([g_optim, self.g_sum],
+                                                   feed_dict={self.z: batch_z, self.y: batch_labels})
+                    self.writer.add_summary(summary_str, counter)
+
 
                     errD_fake = self.d_loss_fake.eval({
                         self.z: batch_z,
@@ -306,7 +327,7 @@ class DCGAN(object):
                          time.time() - start_time, errD_fake + errD_real, errG))
 
                 if np.mod(counter, 100) == 1:
-                    if config.dataset == 'mnist' or config.dataset == 'amfed':
+                    if config.dataset in ['amfed', 'mnist', 'celeba']:
                         samples, d_loss, g_loss = self.sess.run(
                             [self.sampler, self.d_loss, self.g_loss],
                             feed_dict={
@@ -451,31 +472,6 @@ class DCGAN(object):
 
                 return tf.nn.tanh(h4)
 
-                # s_h, s_w = self.output_height, self.output_width
-                # s_h2, s_h4 = int(s_h / 2), int(s_h / 4)
-                # s_w2, s_w4 = int(s_w / 2), int(s_w / 4)
-                #
-                # # yb = tf.expand_dims(tf.expand_dims(y, 1),2)
-                # yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
-                # z = concat([z, y], 1)
-                #
-                # h0 = tf.nn.relu(
-                #     self.g_bn0(linear(z, self.gfc_dim, 'g_h0_lin')))
-                # h0 = concat([h0, y], 1)
-                #
-                # h1 = tf.nn.relu(self.g_bn1(
-                #     linear(h0, self.gf_dim * 2 * s_h4 * s_w4, 'g_h1_lin')))
-                # h1 = tf.reshape(h1, [self.batch_size, s_h4, s_w4, self.gf_dim * 2])
-                #
-                # h1 = conv_cond_concat(h1, yb)
-                #
-                # h2 = tf.nn.relu(tf.nn.dropout(self.g_bn2(deconv2d(h1,
-                #                                     [self.batch_size, s_h2, s_w2, self.gf_dim * 2], name='g_h2')), self.dropout_rate))
-                # h2 = conv_cond_concat(h2, yb)
-                #
-                # return tf.nn.sigmoid(
-                #     deconv2d(h2, [self.batch_size, s_h, s_w, self.c_dim], name='g_h3'))
-
     def sampler(self, z, y=None):
         with tf.variable_scope("generator") as scope:
             scope.reuse_variables()
@@ -536,28 +532,6 @@ class DCGAN(object):
                 h4 = deconv2d(h3, [self.batch_size, s_h, s_w, self.c_dim], name='g_h4')
 
                 return tf.nn.tanh(h4)
-
-                # s_h, s_w = self.output_height, self.output_width
-                # s_h2, s_h4 = int(s_h / 2), int(s_h / 4)
-                # s_w2, s_w4 = int(s_w / 2), int(s_w / 4)
-                #
-                # # yb = tf.reshape(y, [-1, 1, 1, self.y_dim])
-                # yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
-                # z = concat([z, y], 1)
-                #
-                # h0 = tf.nn.relu(self.g_bn0(linear(z, self.gfc_dim, 'g_h0_lin'), train=False))
-                # h0 = concat([h0, y], 1)
-                #
-                # h1 = tf.nn.relu(self.g_bn1(
-                #     linear(h0, self.gf_dim * 2 * s_h4 * s_w4, 'g_h1_lin'), train=False))
-                # h1 = tf.reshape(h1, [self.batch_size, s_h4, s_w4, self.gf_dim * 2])
-                # h1 = conv_cond_concat(h1, yb)
-                #
-                # h2 = tf.nn.relu(tf.nn.dropout(self.g_bn2(
-                #     deconv2d(h1, [self.batch_size, s_h2, s_w2, self.gf_dim * 2], name='g_h2'), train=False), self.dropout_rate))
-                # h2 = conv_cond_concat(h2, yb)
-                #
-                # return tf.nn.sigmoid(deconv2d(h2, [self.batch_size, s_h, s_w, self.c_dim], name='g_h3'))
 
     def load_mnist(self):
         data_dir = os.path.join("./data", self.dataset_name)
