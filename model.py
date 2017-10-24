@@ -23,7 +23,7 @@ class DCGAN(object):
                  y_dim=None, z_dim=100, gf_dim=64, df_dim=64,
                  gfc_dim=1024, dfc_dim=1024, c_dim=3, dataset_name='default',
                  input_fname_pattern='*.jpg', checkpoint_dir=None, sample_dir=None, dropout_rate=1.0,
-                 checkpoint_every=500):
+                 checkpoint_every=500, imbalance_proportion=0.1):
         """
 
         Args:
@@ -80,6 +80,7 @@ class DCGAN(object):
         self.input_fname_pattern = input_fname_pattern
         self.checkpoint_dir = checkpoint_dir
         self.checkpoint_every = checkpoint_every
+        self.imbalance_proportion = imbalance_proportion
         self.build_model()
 
     def build_model(self):
@@ -167,7 +168,7 @@ class DCGAN(object):
         elif config.dataset == 'celeba':
             dataset = CelebA(dir_prefix='/mnt/antares_raid/home/rparra/workspace/DCGAN-tensorflow/data/celebA',
                              cache_dir='/mnt/raid/data/ni/dnn/rparra/cache/')
-            data_y, data, _, _= dataset.as_numpy_array(oversample=True, imbalance_proportion=0.01)
+            data_y, data, _, _= dataset.as_numpy_array(imbalance_proportion=self.imbalance_proportion, oversample=True)
 
             #data_X = (data_X.astype(np.float32) - 127.5) / 127.5
             # data_y[data_y == 1] = 0.9
@@ -282,12 +283,6 @@ class DCGAN(object):
                     _, summary_str = self.sess.run([g_optim, self.g_sum],
                                                    feed_dict={self.z: batch_z, self.y: batch_labels})
                     self.writer.add_summary(summary_str, counter)
-
-                    # Run g_optim twice to make sure that d_loss does not go to zero (different from paper)
-                    _, summary_str = self.sess.run([g_optim, self.g_sum],
-                                                   feed_dict={self.z: batch_z, self.y: batch_labels})
-                    self.writer.add_summary(summary_str, counter)
-
 
                     errD_fake = self.d_loss_fake.eval({
                         self.z: batch_z,

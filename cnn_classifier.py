@@ -135,7 +135,7 @@ class CNNClassifier(object):
             else:
                 result.append(samples)
 
-        X_augmented = result if ooc else np.concatenate(result)
+        X_augmented = np.array(result) if ooc else np.concatenate(result)
         y_augmented = np.ones((config.batch_size * sample_size,))
 
         if ooc:

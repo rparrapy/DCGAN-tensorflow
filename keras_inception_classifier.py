@@ -1,34 +1,29 @@
-import os
 import pickle
-
-import numpy as np
-import scipy
-from keras.applications import VGG16
-from keras.layers import GlobalAveragePooling2D, Dense
-from keras.optimizers import SGD
-from keras.models import Model as KerasModel
-from keras.utils import to_categorical
-from sklearn.metrics import confusion_matrix, roc_curve, auc, roc_auc_score, average_precision_score, accuracy_score
-from sklearn.metrics import f1_score
-
-from scipy import misc
-from scipy import ndimage
-from dataset import DataSet
-from nideep.datasets.amfed.amfed import AMFED
-import pandas as pd
 import time
 
+import numpy as np
+import pandas as pd
+from keras.applications import VGG16
+from keras.layers import GlobalAveragePooling2D, Dense
+from keras.models import Model as KerasModel
+from keras.optimizers import SGD
+from keras.utils import to_categorical
+from sklearn.metrics import confusion_matrix, roc_curve, auc, roc_auc_score
+
+from base_classifier import BaseClassifier
+from dataset import DataSet
+from nideep.datasets.amfed.amfed import AMFED
 from nideep.datasets.celeba.celeba import CelebA
 
 
-class KerasInceptionClassifier(object):
+class KerasInceptionClassifier(BaseClassifier):
     def __init__(self, sess, gan, cache_dir='/mnt/raid/data/ni/dnn/rparra/cache/', global_step=-1):
         self.sess = sess
         self.cache_dir = cache_dir
         self.gan = gan
         self.global_step = global_step
 
-    def get_dataset(self, config, imbalance_proportion=0.1, train_proportion=0.8):
+    def get_dataset(self, config, imbalance_proportion=None, train_proportion=0.8, cache=True):
         if config.dataset == 'amfed':
             dataset = AMFED(dir_prefix='/mnt/raid/data/ni/dnn/AMFED/', video_type=AMFED.VIDEO_TYPE_AVI,
                             cache_dir=self.cache_dir)
@@ -43,7 +38,8 @@ class KerasInceptionClassifier(object):
             dataset = CelebA(dir_prefix='/mnt/antares_raid/home/rparra/workspace/DCGAN-tensorflow/data/celebA',
                              cache_dir='/mnt/raid/data/ni/dnn/rparra/cache/')
             y_train, X_train, y_test, X_test = dataset.as_numpy_array(train_proportion=train_proportion,
-                                                                      imbalance_proportion=imbalance_proportion)
+                                                                      imbalance_proportion=imbalance_proportion,
+                                                                      cache=cache)
             y_train = np.squeeze(y_train)
             y_test = np.squeeze(y_test)
             videos_train = [1]
@@ -59,8 +55,10 @@ class KerasInceptionClassifier(object):
     def evaluate(self, config):
         ooc = config.dataset == 'celeba'
         X_train, X_test, y_train, y_test, video_number = self.get_dataset(config)
-        X_train_balanced, X_test_balanced, y_train_balanced, y_test_balanced, _ = self.get_dataset(config, imbalance_proportion=1.0,
-                                                                             train_proportion=0.8)
+        X_train_balanced, X_test_balanced, y_train_balanced, y_test_balanced, _ = self.get_dataset(config,
+                                                                                                   imbalance_proportion=None,
+                                                                                                   train_proportion=0.8,
+                                                                                                   cache=False)
 
         start = time.time()
         X_train_oversampled, y_train_oversampled = self.oversample(X_train, y_train)
@@ -81,56 +79,41 @@ class KerasInceptionClassifier(object):
         clf = self.get_classifier(config)
         print 'Evaluating unbalanced dataset'
         clf.fit(X_train, y_train)
-        y_pred = clf.predict(X_test, probability=False)
         y_score = clf.predict(X_test)
         # auc_result = self.save_roc(y_test, y_score, 'imbalanced_roc.p')
-        conf_mat = confusion_matrix(y_test, y_pred)
-        acc, auc, f1, bacc, avgp = self.get_metrics(y_test, y_pred, y_score, conf_mat)
-        results.append(self._build_result(acc, auc, f1, bacc, avgp, 'imbalanced'))
+        acc, auc, f1, bacc, avgp, pacc, nacc = self.get_metrics(y_test, y_score)
+        results.append(self.build_result(acc, auc, f1, bacc, avgp, pacc, nacc, 'imbalanced'))
 
         clf = self.get_classifier(config)
         print 'Evaluating oversampled dataset'
         clf.fit(X_train_oversampled, y_train_oversampled)
-        y_pred = clf.predict(X_test, probability=False)
         y_score = clf.predict(X_test)
         # auc_result = self.save_roc(y_test, y_score, 'oversampled_roc.p')
-        conf_mat = confusion_matrix(y_test, y_pred)
-        acc, auc, f1, bacc, avgp = self.get_metrics(y_test, y_pred, y_score, conf_mat)
-        results.append(self._build_result(acc, auc, f1, bacc, avgp, 'oversampled'))
+        acc, auc, f1, bacc, avgp, pacc, nacc = self.get_metrics(y_test, y_score)
+        results.append(self.build_result(acc, auc, f1, bacc, avgp, pacc, nacc, 'oversampled'))
 
         clf = self.get_classifier(config)
         print 'Evaluating augmented dataset'
         clf.fit(X_train_augmented, y_train_augmented)
-        y_pred = clf.predict(X_test, probability=False)
         y_score = clf.predict(X_test)
         # auc_result = self.save_roc(y_test, y_score, 'augmented_roc.p')
-        conf_mat = confusion_matrix(y_test, y_pred)
-        acc, auc, f1, bacc, avgp = self.get_metrics(y_test, y_pred, y_score, conf_mat)
-        results.append(self._build_result(acc, auc, f1, bacc, avgp, 'augmented'))
+        acc, auc, f1, bacc, avgp, pacc, nacc = self.get_metrics(y_test, y_score)
+        results.append(self.build_result(acc, auc, f1, bacc, avgp, pacc, nacc, 'augmented'))
 
         clf = self.get_classifier(config)
         print 'Evaluating synthesized dataset'
         clf.fit(X_train_balanced, y_train_balanced)
-        y_pred = clf.predict(X_test_generated, probability=False)
         y_score = clf.predict(X_test_generated)
         # auc_result = self.save_roc(y_test, y_score, 'imbalanced_roc.p')
-        conf_mat = confusion_matrix(y_test_generated, y_pred)
-        acc, auc, f1, bacc, avgp = self.get_metrics(y_test_generated, y_pred, y_score, conf_mat)
-        results.append(self._build_result(acc, auc, f1, bacc, avgp, 'synthesized'))
+        acc, auc, f1, bacc, avgp, pacc, nacc = self.get_metrics(y_test_generated, y_score)
+        results.append(self.build_result(acc, auc, f1, bacc, avgp, pacc, nacc, 'synthesized'))
 
-        y_pred = clf.predict(X_test_balanced, probability=False)
         y_score = clf.predict(X_test_balanced)
         # auc_result = self.save_roc(y_test, y_score, 'imbalanced_roc.p')
-        conf_mat = confusion_matrix(y_test_balanced, y_pred)
-        acc, auc, f1, bacc, avgp = self.get_metrics(y_test_balanced, y_pred, y_score, conf_mat)
-        results.append(self._build_result(acc, auc, f1, bacc, avgp, 'balanced'))
-
+        acc, auc, f1, bacc, avgp, pacc, nacc = self.get_metrics(y_test_balanced, y_score)
+        results.append(self.build_result(acc, auc, f1, bacc, avgp, pacc, nacc, 'balanced'))
 
         return pd.DataFrame(results)
-
-    def _build_result(self, acc, auc, f1, bacc, avgp, setting):
-        return {'classifier': 'vgg_pretrained', 'dataset': setting, 'acc': acc, 'auc': auc, 'f1': f1, 'bacc': bacc, 'avgp': avgp,
-                'global_step': self.global_step}
 
     def save_roc(self, y_test, y_score, name):
         fpr, tpr, thresholds = roc_curve(y_test, y_score)
@@ -140,102 +123,6 @@ class KerasInceptionClassifier(object):
         auc_result = roc_auc_score(y_test, y_score)
         print 'AUC: %s' % str(auc_result)
         return auc_result
-
-    def generate_dataset(self, sample_size, config, ooc, train_proportion=0.8):
-        y_one_hot = np.zeros((config.batch_size, 1))
-        y_one_hot[1::2] += 1
-        result = []
-        labels = []
-        for i in range(sample_size / config.batch_size):
-            z_sample = np.random.uniform(-1, 1, size=[int(config.batch_size), self.gan.z_dim])
-            samples = self.sess.run(self.gan.sampler, feed_dict={self.gan.z: z_sample, self.gan.y: y_one_hot})
-            labels.append(y_one_hot)
-            if ooc:
-                for j, sample in enumerate(samples):
-                    suffix = "xgenerated_%s_%s.png" % (i, j)
-                    path = os.path.join(self.cache_dir, suffix)
-                    scipy.misc.imsave(path, sample)
-                    result.append(path)
-            else:
-                result.append(samples)
-
-        X_gen = np.array(result) if ooc else np.concatenate(result)
-        y_gen = np.concatenate(labels)
-        return X_gen, np.squeeze(y_gen)
-
-    def get_augmented_dataset(self, X_train, y_train, config, video_number, ooc=False):
-        X_gen, y_gen = self.augment(y_train, config, video_number, ooc)
-        X_augmented = np.concatenate((X_train, X_gen))
-        y_augmented = np.concatenate((y_train, y_gen))
-        p = np.random.permutation(y_augmented.shape[0])
-        return X_augmented[p], y_augmented[p]
-
-    def augment(self, y_train, config, video_number, ooc=False):
-        selected_indices = np.where(y_train == 1)
-        sample_size = (y_train.shape[0] - 2 * selected_indices[0].shape[0]) / config.batch_size
-        y_one_hot = np.ones((config.batch_size, 1))
-        y_video_label = np.random.choice(video_number, (config.batch_size, 1)) / float(video_number)
-        y_sample = y_one_hot if ooc else np.concatenate([y_one_hot, y_video_label], axis=1)
-
-        result = []
-        for i in range(sample_size):
-            z_sample = np.random.uniform(-1, 1, size=[int(config.batch_size), self.gan.z_dim])
-            samples = self.sess.run(self.gan.sampler, feed_dict={self.gan.z: z_sample, self.gan.y: y_sample})
-            if ooc:
-                for j, sample in enumerate(samples):
-                    suffix = "xaugment_%s_%s.png" % (i, j)
-                    path = os.path.join(self.cache_dir, suffix)
-                    scipy.misc.imsave(path, sample)
-                    result.append(path)
-            else:
-                result.append(samples)
-
-        X_augmented = np.array(result) if ooc else np.concatenate(result)
-        y_augmented = np.ones((config.batch_size * sample_size,))
-
-        return X_augmented, y_augmented
-
-    def oversample(self, X_train, y_train, noisy=True):
-        selected_indices = np.where(y_train == 1)
-        sample_size = y_train.shape[0] - 2 * selected_indices[0].shape[0]
-        oversampled_indices = np.random.choice(selected_indices[0], sample_size)
-        if noisy:
-            X_oversampled = np.concatenate((X_train, self.noisify(X_train[oversampled_indices])))
-        else:
-            X_oversampled = np.concatenate((X_train, X_train[oversampled_indices]))
-        y_oversampled = np.concatenate((y_train, y_train[oversampled_indices]))
-        p = np.random.permutation(y_oversampled.shape[0])
-        return X_oversampled[p], y_oversampled[p]
-
-    def noisify(self, X_train):
-        result = []
-        for i, f in enumerate(X_train):
-            x = misc.imread(f)
-            flipped = np.fliplr(x)
-            noisy = ndimage.gaussian_filter1d(flipped, sigma=3, axis=0)
-            noisy = ndimage.gaussian_filter1d(noisy, sigma=3, axis=1)
-            suffix = "xnoisy_%s.png" % (i,)
-            path = os.path.join(self.cache_dir, suffix)
-            scipy.misc.imsave(path, noisy)
-            result.append(path)
-        return np.array(result)
-
-    def get_metrics(self, y_true, y_pred, y_score, conf_mat):
-        auc = roc_auc_score(y_true, y_score)
-        f1 = f1_score(y_true, y_pred)
-        acc = accuracy_score(y_true, y_pred)
-        bacc = self.balanced_accuracy(conf_mat)
-        avgp = average_precision_score(y_true, y_score)
-        print conf_mat
-        print 'ACC:' + str(acc)
-        print 'AUC: ' + str(auc)
-        print 'F1:' + str(f1)
-        print 'BACC:' + str(bacc)
-        print 'AVGP:' + str(avgp)
-        return acc, auc, f1, bacc, avgp
-
-    def balanced_accuracy(self, conf_mat):
-        return (float(conf_mat[0][0]) / sum(conf_mat[0]) + float(conf_mat[1][1]) / sum(conf_mat[1])) / 2.0
 
 
 class Model(object):
@@ -258,7 +145,7 @@ class Model(object):
         self.model = KerasModel(inputs=self.base_model.input, outputs=predictions)
         self.batch_size = config.batch_size
 
-    def fit(self, X_train, y_train, epochs=10):
+    def fit(self, X_train, y_train, epochs=5):
         # X_train = X_train.repeat(3, axis=1).repeat(3, axis=2)
         y_binary = to_categorical(y_train)
         # first: train only the top layers (which were randomly initialized)
@@ -297,7 +184,7 @@ class Model(object):
         for layer in self.model.layers[15:]:
             layer.trainable = True
 
-        self.model.compile(optimizer=SGD(lr=0.0001, momentum=0.9), loss='categorical_crossentropy')
+        self.model.compile(optimizer=SGD(lr=0.001, momentum=0.9), loss='categorical_crossentropy')
 
         # we train our model again (this time fine-tuning the top 2 inception blocks
         # alongside the top Dense layers
