@@ -103,12 +103,12 @@ class DCGAN(object):
 
         if self.y_dim:
             self.G = self.generator(self.z, self.y)
-            self.D, self.D_logits = \
-                self.discriminator(self.inputs, self.y, reuse=False)
+            self.D, self.D_logits, self.D_cat_logits = \
+                self.discriminator(self.inputs, reuse=False)
 
             self.sampler = self.sampler(self.z, self.y)
-            self.D_, self.D_logits_ = \
-                self.discriminator(self.G, self.y, reuse=True)
+            self.D_, self.D_logits_, self.D_cat_logits_ = \
+                self.discriminator(self.G, reuse=True)
         else:
             self.G = self.generator(self.z)
             self.D, self.D_logits = self.discriminator(self.inputs)
@@ -130,13 +130,23 @@ class DCGAN(object):
             sigmoid_cross_entropy_with_logits(self.D_logits, tf.ones_like(self.D)))
         self.d_loss_fake = tf.reduce_mean(
             sigmoid_cross_entropy_with_logits(self.D_logits_, tf.zeros_like(self.D_)))
-        self.g_loss = tf.reduce_mean(
-            sigmoid_cross_entropy_with_logits(self.D_logits_, tf.ones_like(self.D_)))
+
+        self.d_cat_loss_real = tf.reduce_mean(
+            sigmoid_cross_entropy_with_logits(self.D_cat_logits, self.y))
+        self.d_cat_loss_fake = tf.reduce_mean(
+            sigmoid_cross_entropy_with_logits(self.D_cat_logits_, self.y))
+
+
+
 
         self.d_loss_real_sum = scalar_summary("d_loss_real", self.d_loss_real)
         self.d_loss_fake_sum = scalar_summary("d_loss_fake", self.d_loss_fake)
+        self.d_cat_loss_real_sum = scalar_summary("d_cat_loss_real", self.d_cat_loss_real)
+        self.d_cat_loss_fake_sum = scalar_summary("d_cat_loss_fake", self.d_cat_loss_fake)
 
-        self.d_loss = self.d_loss_real + self.d_loss_fake
+        self.d_loss = self.d_loss_real + self.d_loss_fake + self.d_cat_loss_real + self.d_cat_loss_fake
+        self.g_loss = tf.reduce_mean(
+            sigmoid_cross_entropy_with_logits(self.D_logits_, tf.ones_like(self.D_))) - self.d_cat_loss_fake
 
         self.g_loss_sum = scalar_summary("g_loss", self.g_loss)
         self.d_loss_sum = scalar_summary("d_loss", self.d_loss)
@@ -153,8 +163,8 @@ class DCGAN(object):
         if config.dataset == 'mnist':
             data_X, data_y = self.load_mnist()
         elif config.dataset == 'amfed':
-            dataset = AMFED(dir_prefix='/mnt/raid/data/ni/dnn/AMFED/', video_type=AMFED.VIDEO_TYPE_AVI,
-                            cache_dir='/mnt/raid/data/ni/dnn/rparra/cache/')
+            dataset = AMFED(dir_prefix=config.data_dir, video_type=AMFED.VIDEO_TYPE_AVI,
+                            cache_dir=config.cache_dir)
             data_X, data_y, videos_train, _, _, _, _, _ = dataset.as_numpy_array()
             data_X = (data_X.astype(np.float32) - 127.5) / 127.5
             le = preprocessing.LabelEncoder()
@@ -166,11 +176,12 @@ class DCGAN(object):
             # data_X = data_X.reshape(data_X.shape + (self.c_dim, ))
             print "dataset shape: " + str(data_X.shape)
         elif config.dataset == 'celeba':
-            dataset = CelebA(dir_prefix='/mnt/antares_raid/home/rparra/workspace/DCGAN-tensorflow/data/celebA',
-                             cache_dir='/mnt/raid/data/ni/dnn/rparra/cache/')
-            data_y, data, _, _= dataset.as_numpy_array(imbalance_proportion=self.imbalance_proportion, oversample=True)
+            dataset = CelebA(dir_prefix=config.data_dir,
+                             cache_dir=config.cache_dir)
+            data_y, data, _, _, _, _ = dataset.as_numpy_array(imbalance_proportion=self.imbalance_proportion,
+                                                              projection=[config.label_attr], oversample=True)
 
-            #data_X = (data_X.astype(np.float32) - 127.5) / 127.5
+            # data_X = (data_X.astype(np.float32) - 127.5) / 127.5
             # data_y[data_y == 1] = 0.9
             # data_X = data_X.reshape(data_X.shape + (self.c_dim, ))
             print "dataset shape: " + str(data_y.shape)
@@ -361,40 +372,42 @@ class DCGAN(object):
             if reuse:
                 scope.reuse_variables()
 
-            if not self.y_dim:
-                h0 = lrelu(conv2d(image, self.df_dim, name='d_h0_conv'))
-                h1 = lrelu(tf.nn.dropout(self.d_bn1(conv2d(h0, self.df_dim * 2, name='d_h1_conv')), self.dropout_rate))
-                h2 = lrelu(tf.nn.dropout(self.d_bn2(conv2d(h1, self.df_dim * 4, name='d_h2_conv')), self.dropout_rate))
-                h3 = lrelu(tf.nn.dropout(self.d_bn3(conv2d(h2, self.df_dim * 8, name='d_h3_conv')), self.dropout_rate))
-                h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h3_lin')
+            # if not self.y_dim:
+            h0 = lrelu(conv2d(image, self.df_dim, name='d_h0_conv'))
+            h1 = lrelu(tf.nn.dropout(self.d_bn1(conv2d(h0, self.df_dim * 2, name='d_h1_conv')), self.dropout_rate))
+            h2 = lrelu(tf.nn.dropout(self.d_bn2(conv2d(h1, self.df_dim * 4, name='d_h2_conv')), self.dropout_rate))
+            h3 = lrelu(tf.nn.dropout(self.d_bn3(conv2d(h2, self.df_dim * 8, name='d_h3_conv')), self.dropout_rate))
 
-                return tf.nn.sigmoid(h4), h4
-            else:
-                yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
-                x = conv_cond_concat(image, yb)
+            h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h3_lin')
+            h5 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h4_lin')
 
-                h0 = lrelu(tf.nn.dropout(conv2d(x, self.df_dim, name='d_h0_conv'), self.dropout_rate))
-                # h0 = conv_cond_concat(h0, yb)
-
-                h1 = lrelu(tf.nn.dropout(self.d_bn1(conv2d(h0, self.df_dim * 2, name='d_h1_conv')), self.dropout_rate))
-                # h1 = tf.reshape(h1, [self.batch_size, -1])
-                # h1 = conv_cond_concat(h1, yb)
-
-                h2 = lrelu(tf.nn.dropout(self.d_bn2(conv2d(h1, self.df_dim * 4, name='d_h2_conv')), self.dropout_rate))
-                # h2 = tf.reshape(h2, [self.batch_size, -1])
-                # h2 = conv_cond_concat(h2, yb)
-
-                h3 = lrelu(tf.nn.dropout(self.d_bn3(conv2d(h2, self.df_dim * 8, name='d_h3_conv')), self.dropout_rate))
-                h3 = tf.reshape(h3, [self.batch_size, -1])
-                # h3 = concat([h3, y], 1)
-
-                h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h3_lin')
-                # h4 = lrelu(self.d_bn4(linear(h3, self.dfc_dim, 'd_h4_lin')))
-                # h4 = concat([h4, y], 1)
-
-                # h5 = linear(h4, 1, 'd_h5_lin')
-
-                return tf.nn.sigmoid(h4), h4
+            return tf.nn.sigmoid(h4), h4, h5
+            # else:
+            #     yb = tf.reshape(y, [self.batch_size, 1, 1, self.y_dim])
+            #     x = conv_cond_concat(image, yb)
+            #
+            #     h0 = lrelu(tf.nn.dropout(conv2d(x, self.df_dim, name='d_h0_conv'), self.dropout_rate))
+            #     # h0 = conv_cond_concat(h0, yb)
+            #
+            #     h1 = lrelu(tf.nn.dropout(self.d_bn1(conv2d(h0, self.df_dim * 2, name='d_h1_conv')), self.dropout_rate))
+            #     # h1 = tf.reshape(h1, [self.batch_size, -1])
+            #     # h1 = conv_cond_concat(h1, yb)
+            #
+            #     h2 = lrelu(tf.nn.dropout(self.d_bn2(conv2d(h1, self.df_dim * 4, name='d_h2_conv')), self.dropout_rate))
+            #     # h2 = tf.reshape(h2, [self.batch_size, -1])
+            #     # h2 = conv_cond_concat(h2, yb)
+            #
+            #     h3 = lrelu(tf.nn.dropout(self.d_bn3(conv2d(h2, self.df_dim * 8, name='d_h3_conv')), self.dropout_rate))
+            #     h3 = tf.reshape(h3, [self.batch_size, -1])
+            #     # h3 = concat([h3, y], 1)
+            #
+            #     h4 = linear(tf.reshape(h3, [self.batch_size, -1]), 1, 'd_h3_lin')
+            #     # h4 = lrelu(self.d_bn4(linear(h3, self.dfc_dim, 'd_h4_lin')))
+            #     # h4 = concat([h4, y], 1)
+            #
+            #     # h5 = linear(h4, 1, 'd_h5_lin')
+            #
+            #     return tf.nn.sigmoid(h4), h4
 
     def generator(self, z, y=None):
         with tf.variable_scope("generator") as scope:

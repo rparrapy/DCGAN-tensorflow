@@ -17,16 +17,15 @@ from nideep.datasets.celeba.celeba import CelebA
 
 
 class KerasInceptionClassifier(BaseClassifier):
-    def __init__(self, sess, gan, cache_dir='/mnt/raid/data/ni/dnn/rparra/cache/', global_step=-1):
+    def __init__(self, sess, gan, global_step=-1):
         self.sess = sess
-        self.cache_dir = cache_dir
         self.gan = gan
         self.global_step = global_step
 
     def get_dataset(self, config, imbalance_proportion=None, train_proportion=0.8, cache=True):
         if config.dataset == 'amfed':
-            dataset = AMFED(dir_prefix='/mnt/raid/data/ni/dnn/AMFED/', video_type=AMFED.VIDEO_TYPE_AVI,
-                            cache_dir=self.cache_dir)
+            dataset = AMFED(dir_prefix=config.data_dir, video_type=AMFED.VIDEO_TYPE_AVI,
+                            cache_dir=config.cache_dir)
 
             (X_train, y_train, videos_train, _, X_test, y_test, _, _) = dataset.as_numpy_array(
                 train_proportion=train_proportion)
@@ -34,17 +33,20 @@ class KerasInceptionClassifier(BaseClassifier):
             X_test = np.flip((X_test.astype(np.float32) - 127.5) / 127.5, axis=-1)
             y_train = np.squeeze(y_train)
             y_test = np.squeeze(y_test)
+            X_valid = None
+            y_valid = None
         else:
-            dataset = CelebA(dir_prefix='/mnt/antares_raid/home/rparra/workspace/DCGAN-tensorflow/data/celebA',
-                             cache_dir='/mnt/raid/data/ni/dnn/rparra/cache/')
-            y_train, X_train, y_test, X_test = dataset.as_numpy_array(train_proportion=train_proportion,
-                                                                      imbalance_proportion=imbalance_proportion,
-                                                                      cache=cache)
+            dataset = CelebA(dir_prefix=config.data_dir,
+                             cache_dir=config.cache_dir)
+            y_train, X_train, y_test, X_test, y_valid, X_valid = dataset.as_numpy_array(
+                train_proportion=train_proportion,
+                imbalance_proportion=imbalance_proportion,
+                cache=cache, projection=[config.label_attr])
             y_train = np.squeeze(y_train)
             y_test = np.squeeze(y_test)
             videos_train = [1]
 
-        return X_train, X_test, y_train, y_test, len(set(videos_train))
+        return X_train, X_test, X_valid, y_train, y_test, y_valid, len(set(videos_train))
 
     def get_classifier(self, config):
         # param_grid = {'C': [2 ** x for x in range(-3, 5)],
@@ -54,14 +56,15 @@ class KerasInceptionClassifier(BaseClassifier):
 
     def evaluate(self, config):
         ooc = config.dataset == 'celeba'
-        X_train, X_test, y_train, y_test, video_number = self.get_dataset(config)
-        X_train_balanced, X_test_balanced, y_train_balanced, y_test_balanced, _ = self.get_dataset(config,
-                                                                                                   imbalance_proportion=None,
-                                                                                                   train_proportion=0.8,
-                                                                                                   cache=False)
+        X_train, X_test, X_valid, y_train, y_test, y_valid, video_number = self.get_dataset(config)
+        X_train_balanced, X_test_balanced, X_valid_balanced, y_train_balanced, y_test_balanced, y_valid_balanced, _ = self.get_dataset(
+            config,
+            imbalance_proportion=None,
+            train_proportion=0.8,
+            cache=False)
 
         start = time.time()
-        X_train_oversampled, y_train_oversampled = self.oversample(X_train, y_train)
+        X_train_oversampled, y_train_oversampled = self.oversample(X_train, y_train, config)
         end = time.time()
         print('Oversampling done in ' + str(end - start) + 's')
         start = time.time()
@@ -80,38 +83,42 @@ class KerasInceptionClassifier(BaseClassifier):
         print 'Evaluating unbalanced dataset'
         clf.fit(X_train, y_train)
         y_score = clf.predict(X_test)
+        y_valid_score = clf.predict(X_valid)
         # auc_result = self.save_roc(y_test, y_score, 'imbalanced_roc.p')
-        acc, auc, f1, bacc, avgp, pacc, nacc = self.get_metrics(y_test, y_score)
-        results.append(self.build_result(acc, auc, f1, bacc, avgp, pacc, nacc, 'imbalanced'))
+        acc, auc, f1, bacc, avgp = self.get_metrics(y_test, y_score, y_valid, y_valid_score)
+        results.append(self.build_result(acc, auc, f1, bacc, avgp, 'imbalanced'))
 
-        clf = self.get_classifier(config)
-        print 'Evaluating oversampled dataset'
-        clf.fit(X_train_oversampled, y_train_oversampled)
-        y_score = clf.predict(X_test)
-        # auc_result = self.save_roc(y_test, y_score, 'oversampled_roc.p')
-        acc, auc, f1, bacc, avgp, pacc, nacc = self.get_metrics(y_test, y_score)
-        results.append(self.build_result(acc, auc, f1, bacc, avgp, pacc, nacc, 'oversampled'))
-
-        clf = self.get_classifier(config)
-        print 'Evaluating augmented dataset'
-        clf.fit(X_train_augmented, y_train_augmented)
-        y_score = clf.predict(X_test)
-        # auc_result = self.save_roc(y_test, y_score, 'augmented_roc.p')
-        acc, auc, f1, bacc, avgp, pacc, nacc = self.get_metrics(y_test, y_score)
-        results.append(self.build_result(acc, auc, f1, bacc, avgp, pacc, nacc, 'augmented'))
+        # clf = self.get_classifier(config)
+        # print 'Evaluating oversampled dataset'
+        # clf.fit(X_train_oversampled, y_train_oversampled)
+        # y_score = clf.predict(X_test)
+        # y_valid_score = clf.predict(X_valid)
+        # # auc_result = self.save_roc(y_test, y_score, 'oversampled_roc.p')
+        # acc, auc, f1, bacc, avgp = self.get_metrics(y_test, y_score, y_valid, y_valid_score)
+        # results.append(self.build_result(acc, auc, f1, bacc, avgp, 'oversampled'))
+        #
+        # clf = self.get_classifier(config)
+        # print 'Evaluating augmented dataset'
+        # clf.fit(X_train_augmented, y_train_augmented)
+        # y_score = clf.predict(X_test)
+        # y_valid_score = clf.predict(X_valid)
+        # # auc_result = self.save_roc(y_test, y_score, 'augmented_roc.p')
+        # acc, auc, f1, bacc, avgp = self.get_metrics(y_test, y_score, y_valid, y_valid_score)
+        # results.append(self.build_result(acc, auc, f1, bacc, avgp, 'augmented'))
 
         clf = self.get_classifier(config)
         print 'Evaluating synthesized dataset'
         clf.fit(X_train_balanced, y_train_balanced)
         y_score = clf.predict(X_test_generated)
+        y_valid_score = clf.predict(X_valid)
         # auc_result = self.save_roc(y_test, y_score, 'imbalanced_roc.p')
-        acc, auc, f1, bacc, avgp, pacc, nacc = self.get_metrics(y_test_generated, y_score)
-        results.append(self.build_result(acc, auc, f1, bacc, avgp, pacc, nacc, 'synthesized'))
+        acc, auc, f1, bacc, avgp = self.get_metrics(y_test_generated, y_score, y_valid, y_valid_score)
+        results.append(self.build_result(acc, auc, f1, bacc, avgp, 'synthesized'))
 
         y_score = clf.predict(X_test_balanced)
         # auc_result = self.save_roc(y_test, y_score, 'imbalanced_roc.p')
-        acc, auc, f1, bacc, avgp, pacc, nacc = self.get_metrics(y_test_balanced, y_score)
-        results.append(self.build_result(acc, auc, f1, bacc, avgp, pacc, nacc, 'balanced'))
+        acc, auc, f1, bacc, avgp = self.get_metrics(y_test_balanced, y_score, y_valid, y_valid_score)
+        results.append(self.build_result(acc, auc, f1, bacc, avgp, 'balanced'))
 
         return pd.DataFrame(results)
 

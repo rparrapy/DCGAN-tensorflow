@@ -18,6 +18,7 @@ flags.DEFINE_integer("epoch", 25, "Epoch to train [25]")
 flags.DEFINE_float("learning_rate", 0.0002, "Learning rate of for adam [0.0002]")
 flags.DEFINE_float("imbalance_proportion", 0.1, "# Minority class = # Majority class * imbalance_proportion")
 flags.DEFINE_float("beta1", 0.5, "Momentum term of adam [0.5]")
+flags.DEFINE_float("gpu_memory_fraction", 1.0, "GPU memory usage limit")
 flags.DEFINE_integer("train_size", np.inf, "The size of train images [np.inf]")
 flags.DEFINE_integer("batch_size", 64, "The size of batch images [64]")
 flags.DEFINE_integer("input_height", 108, "The size of image to use (will be center cropped). [108]")
@@ -33,6 +34,10 @@ flags.DEFINE_string("sample_dir", "samples", "Directory name to save the image s
 flags.DEFINE_boolean("is_train", False, "True for training, False for testing [False]")
 flags.DEFINE_boolean("is_crop", False, "True for training, False for testing [False]")
 flags.DEFINE_boolean("visualize", False, "True for visualizing, False for nothing [False]")
+flags.DEFINE_string("label_attr", "Smiling", "Attribute to use as the label for the conditioning and classification")
+flags.DEFINE_string("cache_dir", "/mnt/raid/data/ni/dnn/rparra/cache/", "Path for caching dataset files")
+flags.DEFINE_string("data_dir", "/mnt/raid/data/ni/dnn/rparra/data/celebA", "Path corresponding to dataset location")
+
 FLAGS = flags.FLAGS
 
 def main(_):
@@ -48,9 +53,9 @@ def main(_):
   if not os.path.exists(FLAGS.sample_dir):
     os.makedirs(FLAGS.sample_dir)
 
-  #gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.333)
   run_config = tf.ConfigProto()
   run_config.gpu_options.allow_growth=True
+  run_config.gpu_options.per_process_gpu_memory_fraction = FLAGS.gpu_memory_fraction
 
   with tf.Session(config=run_config) as sess:
     if FLAGS.dataset == 'mnist':
@@ -137,25 +142,25 @@ def main(_):
     #                 [dcgan.h4_w, dcgan.h4_b, None])
 
     # Below is codes for visualization
-    OPTION = 1
-    visualize(sess, dcgan, FLAGS, OPTION)
-
-    if FLAGS.dataset in ['amfed', 'celeba']:
-        # ev = DiscriminatorEvaluator(sess, dcgan, FLAGS)
-        # ev.evaluate()
-        results = []
-        clf = KerasInceptionClassifier(sess, dcgan)
-        keras_results = clf.evaluate(FLAGS)
-        results.append(keras_results)
-        # clf = CNNClassifier(sess, dcgan)
-        # custom_cnn_results = clf.evaluate(FLAGS, teardown=True)
-        # results.append(custom_cnn_results)
-        df = pd.concat(results)
-        df.to_csv('result_summary_%s.csv' % (FLAGS.dataset, ))
-        # clf = KNNClassifier(sess, dcgan)
-        # knn_results = clf.evaluate(FLAGS)
-        # ev = DiscriminatorEvaluator(sess, dcgan, FLAGS)
-        # ev.evaluate()
+    # OPTION = 1
+    # visualize(sess, dcgan, FLAGS, OPTION)
+    #
+    # if FLAGS.dataset in ['amfed', 'celeba']:
+    #     # ev = DiscriminatorEvaluator(sess, dcgan, FLAGS)
+    #     # ev.evaluate()
+    #     results = []
+    #     clf = KerasInceptionClassifier(sess, dcgan)
+    #     keras_results = clf.evaluate(FLAGS)
+    #     results.append(keras_results)
+    #     # clf = CNNClassifier(sess, dcgan)
+    #     # custom_cnn_results = clf.evaluate(FLAGS, teardown=True)
+    #     # results.append(custom_cnn_results)
+    #     df = pd.concat(results)
+    #     df.to_csv('result_summary_%s.csv' % (FLAGS.dataset, ))
+    #     # clf = KNNClassifier(sess, dcgan)
+    #     # knn_results = clf.evaluate(FLAGS)
+    #     # ev = DiscriminatorEvaluator(sess, dcgan, FLAGS)
+    #     # ev.evaluate()
 
 
 if __name__ == '__main__':
