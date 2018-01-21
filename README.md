@@ -1,112 +1,73 @@
-# DCGAN in Tensorflow
+# Sinthesizing facial expressions using Generative Adversarial Networks
+## Author: Rodrigo Parra
 
-Tensorflow implementation of [Deep Convolutional Generative Adversarial Networks](http://arxiv.org/abs/1511.06434) which is a stabilize Generative Adversarial Networks. The referenced torch code can be found [here](https://github.com/soumith/dcgan.torch).
+This repository contains the source code for the model and experiments
+corresponding to my master thesis developed under supervision of Youssef Kashef
+and Prof. Dr. Klaus Obermayer from the Neural Information Processing Group (NI) at
+TU Berlin.
 
-![alt tag](DCGAN.png)
+## Important files
 
-* [Brandon Amos](http://bamos.github.io/) wrote an excellent [blog post](http://bamos.github.io/2016/08/09/deep-completion/) and [image completion code](https://github.com/bamos/dcgan-completion.tensorflow) based on this repo.
-* *To avoid the fast convergence of D (discriminator) network, G (generator) network is updated twice for each D network update, which differs from original paper.*
+- **main.py**: executable file that allows to run a single instance of the experiment, i.e.
+  training a conditional GAN and evaluating it given a certain level of imbalance, label, etc.
+  
+- **model.py**: code corresponding to the AC-GAN.
 
+- **keras_inception_classifier.py**: code corresponding to the fine-tuned model used
+to evaluate GAN sampling as an imbalance remedy.
 
-## Online Demo
+- **run_experiments.sh**: bash script that allows bulk run of experiments given certain parameters.
 
-[<img src="https://raw.githubusercontent.com/carpedm20/blog/master/content/images/face.png">](http://carpedm20.github.io/faces/)
-
-[link](http://carpedm20.github.io/faces/)
-
-
-## Prerequisites
-
-- Python 2.7 or Python 3.3+
-- [Tensorflow 0.12.1](https://github.com/tensorflow/tensorflow/tree/r0.12)
-- [SciPy](http://www.scipy.org/install.html)
-- [pillow](https://github.com/python-pillow/Pillow)
-- (Optional) [moviepy](https://github.com/Zulko/moviepy) (for visualization)
-- (Optional) [Align&Cropped Images.zip](http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html) : Large-scale CelebFaces Dataset
+- ***\*.ipynb***: Jupyter notebooks used for analysis of the results. 
 
 
-## Usage
+## How to run
 
-First, download dataset with:
+To run a batch of experiments consecutively with the same parameters execute the following command:
 
-    $ python download.py mnist celebA
+``
+nohup bash ../run_experiments.sh celeba [number of runs] [number of runs already finished] [imbalance level] [cache folder] [dataset folder] [label] [gpu capacity to use] &
+``
 
-To train a model with downloaded dataset:
+An example of the previous command with actual parameters looks like: 
+ 
+``
+nohup bash ../run_experiments.sh celeba 3 0 0.175 /mnt/antares_raid/home/rparra/workspace/DCGAN-tensorflow/cache_local /mnt/antares_raid/home/rparra/workspace/DCGAN-tensorflow/data_local/celebA Mouth_Slightly_Open 0.5 &
+``
 
-    $ python main.py --dataset mnist --input_height=28 --output_height=28 --c_dim=1 --is_train
-    $ python main.py --dataset celebA --input_height=108 --is_train --is_crop True
+## Results folder structure
 
-To test with an existing model:
+Jupyter notebooks used for analysis require a certain folder structure to be ran as is.
 
-    $ python main.py --dataset mnist --input_height=28 --output_height=28 --c_dim=1
-    $ python main.py --dataset celebA --input_height=108 --is_crop True
+### Results CelebA.ipynb
+    results/
+        attractive/
+            results_celeba_Attractive_0.1/
+            results_celeba_Attractive_0.25/
+            .
+            .
+            .
+        high_cheekbones/
+        lipstick/
+        mouth_slightly_open/
+        smiling/
+        
+Where *results_celeba_Attractive_0.1* and analogous folders store 
+the results of running *run_experiments.sh* for the *Attractive* label
+and *0.1* level of imbalance.
 
-Or, you can use your own dataset (without central crop) by:
+### UMAP.ipynb
 
-    $ mkdir data/DATASET_NAME
-    ... add images to data/DATASET_NAME ...
-    $ python main.py --dataset DATASET_NAME --is_train
-    $ python main.py --dataset DATASET_NAME
-    $ # example
-    $ python main.py --dataset=eyes --input_fname_pattern="*_cropped.png" --c_dim=1 --is_train
-
-## Results
-
-![result](assets/training.gif)
-
-### celebA
-
-After 6th epoch:
-
-![result3](assets/result_16_01_04_.png)
-
-After 10th epoch:
-
-![result4](assets/test_2016-01-27%2015:08:54.png)
-
-### Asian face dataset
-
-![custom_result1](web/img/change5.png)
-
-![custom_result1](web/img/change2.png)
-
-![custom_result2](web/img/change4.png)
-
-### MNIST
-
-MNIST codes are written by [@PhoenixDai](https://github.com/PhoenixDai).
-
-![mnist_result1](assets/mnist1.png)
-
-![mnist_result2](assets/mnist2.png)
-
-![mnist_result3](assets/mnist3.png)
-
-More results can be found [here](./assets/) and [here](./web/img/).
+    img_align_celeba/
+    cache/
+    cache_generated/
+    
+Where **img_align_celeba** contains the CelebA dataset, *cache* contains the cached
+splits corresponding to a single run of the training procedure and
+*cache_generated* contains images sampled from the trained GAN.
 
 
-## Training details
+##Credit
 
-Details of the loss of Discriminator and Generator (with custom dataset not celebA).
-
-![d_loss](assets/d_loss.png)
-
-![g_loss](assets/g_loss.png)
-
-Details of the histogram of true and fake result of discriminator (with custom dataset not celebA).
-
-![d_hist](assets/d_hist.png)
-
-![d__hist](assets/d__hist.png)
-
-
-## Related works
-
-- [BEGAN-tensorflow](https://github.com/carpedm20/BEGAN-tensorflow)
-- [DiscoGAN-pytorch](https://github.com/carpedm20/DiscoGAN-pytorch)
-- [simulated-unsupervised-tensorflow](https://github.com/carpedm20/simulated-unsupervised-tensorflow)
-
-
-## Author
-
-Taehoon Kim / [@carpedm20](http://carpedm20.github.io/)
+This project was based on the DCGAN implementation available in [https://github.com/carpedm20/DCGAN-tensorflow](https://github.com/carpedm20/DCGAN-tensorflow),
+from which it was forked.
